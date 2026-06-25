@@ -473,11 +473,11 @@ const server = http.createServer((req, res) => {
     return;
   }
   serveStatic(req, res);
-});
+}); // <-- Este fecha o createServer
 
 carregarChavesDoArquivo().then(() => {
   server.listen(PORT, () => {
-    console.log(`Robux local server running at http://${HOST}:${PORT}/robuxcomprar.html`);
+    console.log(`Robux local server running on port ${PORT}`);
   });
 });
 
