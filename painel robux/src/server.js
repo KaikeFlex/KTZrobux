@@ -286,7 +286,7 @@ async function serveStatic(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
 
-// 🔑 NOVO PAINEL COM SELEÇÃO DE TEMPO
+  // 🔑 NOVO PAINEL COM SELEÇÃO DE TEMPO
   if (pathname === '/painel-admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`
@@ -296,7 +296,7 @@ async function serveStatic(req, res) {
         <title>Painel Gerenciador de Keys Temporárias</title>
         <style>
           body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; padding: 50px; }
-          .box { background: #222; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 450px; }
+          .box { background: #222; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 550px; }
           input, select { padding: 12px; border-radius: 5px; border: 1px solid #444; background: #333; color: #fff; font-size: 16px; margin: 10px 5px; box-sizing: border-box; }
           input[type="text"] { width: 60%; }
           select { width: 35%; }
@@ -337,16 +337,18 @@ async function serveStatic(req, res) {
               const ul = document.getElementById('listaKeys');
               ul.innerHTML = '';
               data.keys.forEach(item => {
-                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + ' <a href="#" onclick="deletarKey(\\''+item.key+'\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
+                // Modificado aqui para injetar e exibir o Usuário Logado se houver
+                let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88; font-weight:bold;">' + item.usuario + '</span>]' : ' ⏳ [Ninguém Logou]';
+                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + userString + ' <a href="#" onclick="deletarKey(\\''+item.key+'\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
               });
             });
           }
           function gerarKey() {
             const key = document.getElementById('keyInput').value.trim();
-            const minutos = document.getElementById('timeInput').value;
+            const minutes = document.getElementById('timeInput').value;
             if(!key) return alert('Por favor, digite o nome da chave!');
             
-            fetch('/api/ativar-key?key=' + encodeURIComponent(key) + '&minutos=' + minutos).then(() => {
+            fetch('/api/ativar-key?key=' + encodeURIComponent(key) + '&minutos=' + minutes).then(() => {
               document.getElementById('keyInput').value = '';
               carregarKeys();
             });
