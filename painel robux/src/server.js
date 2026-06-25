@@ -51,7 +51,7 @@ async function salvarChavesNoArquivo() {
     for (const [key, expiracao] of CHAVES_ATIVAS.entries()) {
       linhas.push(`${key}:${expiracao}`);
     }
-    await fs.writeFile(FILE_CHAVES, linhas.join('\n'), 'utf8');
+    await fs.writeFile(FILE_CHAVES, lines.join('\n'), 'utf8');
   } catch (err) {
     console.error('Erro ao salvar chaves.txt:', err);
   }
@@ -217,6 +217,11 @@ async function handleLocalUser(req, res) {
   const customNick = requestUrl.searchParams.get('customNick');
   const customRobux = requestUrl.searchParams.get('customRobux');
   
+  // 🛡️ SEGURANÇA MÁXIMA: Se o site enviar uma key que NÃO existe nas ativas, desconecta na hora!
+  if (userKey && !CHAVES_ATIVAS.has(userKey)) {
+    return sendJson(res, 401, { error: 'Desconectado', message: 'Esta chave foi removida pelo administrador.' });
+  }
+  
   if (userKey && customNick) {
     if (SESSAO_KEYS.has(userKey) && SESSAO_KEYS.get(userKey) !== customNick) {
       return sendJson(res, 401, { error: 'Desconectado' });
@@ -337,7 +342,6 @@ async function serveStatic(req, res) {
               const ul = document.getElementById('listaKeys');
               ul.innerHTML = '';
               data.keys.forEach(item => {
-                // Modificado aqui para injetar e exibir o Usuário Logado se houver
                 let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88; font-weight:bold;">' + item.usuario + '</span>]' : ' ⏳ [Ninguém Logou]';
                 ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + userString + ' <a href="#" onclick="deletarKey(\\''+item.key+'\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
               });
