@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs/promises');
 const path = require('path');
 
-const PORT = Number(process.env.PORT || 8765);
+const PORT = process.env.PORT || 3000;
 const HOST = '127.0.0.1';
 const ROOT = __dirname;
 const CACHE_TTL = 5 * 60_000;
