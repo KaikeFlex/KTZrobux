@@ -3,10 +3,8 @@ const fs = require('fs/promises');
 const path = require('path');
 
 const PORT = process.env.PORT || 3000;
-const HOST = '127.0.0.1';
 const ROOT = __dirname;
 const CACHE_TTL = 5 * 60_000;
-const STALE_CACHE_TTL = 60 * 60_000;
 const cache = new Map();
 
 // Caminho para salvar as chaves no computador
@@ -15,35 +13,20 @@ const FILE_CHAVES = path.join(ROOT, 'chaves.txt');
 // Banco de dados na memória. Formato: 'nome_da_key' => timestamp_expiracao (em milissegundos)
 let CHAVES_ATIVAS = new Map();
 
-// --- ADICIONADO: Memória de quem está usando cada chave ---
+// Memória de quem está usando cada chave
 const SESSAO_KEYS = new Map(); 
 
 // Chaves padrão eternas (nunca expiram - timestamp muito alto)
 CHAVES_ATIVAS.set('ktz', 9999999999999);
 
-// Função para carregar as chaves salvas do arquivo ao iniciar
-async function carregarChavesDoArquivo() {
-  try {
-    const conteudo = await fs.readFile(FILE_CHAVES, 'utf8');
-    const linhas = conteudo.split(/\r?\n/);
-    const agora = Date.now();
-
-    for (const linha of linhas) {
-      if (!linha.trim()) continue;
-      const [key, expStr] = linha.split(':');
-      if (key && expStr) {
-        const expiracao = Number(expStr);
-        // Só carrega se a chave ainda não tiver expirado
-        if (expiracao > agora) {
-          CHAVES_ATIVAS.set(key.trim(), expiracao);
-        }
-      }
-    }
-    await salvarChavesNoArquivo(); // Limpa as expiradas do arquivo
-    console.log('📦 Chaves ativas carregadas:', Array.from(CHAVES_ATIVAS.keys()));
-  } catch {
-    await salvarChavesNoArquivo();
+// Função para gerar strings aleatórias usadas na integração
+function gerarStringAleatoria(tamanho) {
+  let resultado = '';
+  const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  for (let i = 0; i < tamanho; i++) {
+    resultado += caracteres.charAt(Math.floor(Math.random() * caracteres.length));
   }
+  return resultado;
 }
 
 // Função para salvar a lista atual no arquivo chaves.txt
@@ -59,6 +42,50 @@ async function salvarChavesNoArquivo() {
   }
 }
 
+// Isso cria o "atalho" que o KartzzX vai usar
+function handleApiKeysCreate(req, res) {
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', async () => {
+    try {
+      const { customerName, prefix } = JSON.parse(body);
+      const sufixo = gerarStringAleatoria(4);
+      const novaKey = `${prefix || 'KTZ'}-${(customerName || 'USER').toUpperCase()}-${sufixo}`;
+      
+      CHAVES_ATIVAS.set(novaKey, Date.now() + (1440 * 60 * 1000)); // 24 horas de validade
+      await salvarChavesNoArquivo();
+      
+      sendJson(res, 200, { success: true, key: novaKey, message: "Key gerada com sucesso" });
+    } catch (e) {
+      sendJson(res, 400, { success: false, message: "Erro ao criar key" });
+    }
+  });
+}
+
+// Função para carregar as chaves salvas do arquivo ao iniciar
+async function carregarChavesDoArquivo() {
+  try {
+    const conteudo = await fs.readFile(FILE_CHAVES, 'utf8');
+    const linhas = conteudo.split(/\r?\n/);
+    const agora = Date.now();
+
+    for (const linha of linhas) {
+      if (!linha.trim()) continue;
+      const [key, expStr] = linha.split(':');
+      if (key && expStr) {
+        const expiracao = Number(expStr);
+        if (expiracao > agora) {
+          CHAVES_ATIVAS.set(key.trim(), expiracao);
+        }
+      }
+    }
+    await salvarChavesNoArquivo(); // Limpa as expiradas do arquivo
+    console.log('📦 Chaves ativas carregadas:', Array.from(CHAVES_ATIVAS.keys()));
+  } catch {
+    await salvarChavesNoArquivo();
+  }
+}
+
 // Verifica e remove chaves expiradas a cada 10 segundos automaticamente
 setInterval(async () => {
   const agora = Date.now();
@@ -67,7 +94,7 @@ setInterval(async () => {
   for (const [key, expiracao] of CHAVES_ATIVAS.entries()) {
     if (agora >= expiracao) {
       CHAVES_ATIVAS.delete(key);
-      SESSAO_KEYS.delete(key); // Limpa também a sessão de uso
+      SESSAO_KEYS.delete(key); 
       mudou = true;
       console.log(`⏰ A chave "${key}" expirou e foi removida automaticamente.`);
     }
@@ -219,14 +246,12 @@ async function handleLocalUser(req, res) {
   const customNick = requestUrl.searchParams.get('customNick');
   const customRobux = requestUrl.searchParams.get('customRobux');
   
-  // --- Lógica de Checagem Corrigida ---
   if (userKey && customNick) {
     if (SESSAO_KEYS.has(userKey) && SESSAO_KEYS.get(userKey) !== customNick) {
       return sendJson(res, 401, { error: 'Desconectado' });
     }
     SESSAO_KEYS.set(userKey, customNick);
   }
-  // -------------------------------------
 
   const settings = await getLocalSettings();
   const activeUsername = customNick ? String(customNick).trim() : settings.username;
@@ -262,7 +287,6 @@ async function serveStatic(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
 
-  // 🔑 NOVO PAINEL COM SELEÇÃO DE TEMPO
   if (pathname === '/painel-admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`
@@ -287,7 +311,6 @@ async function serveStatic(req, res) {
         <div class="box">
           <h2>🔑 Gerenciador de Keys Temporárias</h2>
           <p>Configure a chave e o tempo de validade do cliente</p>
-          
           <div style="text-align: left;">
             <input type="text" id="keyInput" placeholder="Nome da Chave (Ex: vip30)">
             <select id="timeInput">
@@ -299,9 +322,7 @@ async function serveStatic(req, res) {
               <option value="1440">24 Horas (1 Dia)</option>
             </select>
           </div>
-          
           <button onclick="gerarKey()">Ativar Chave com Tempo</button>
-          
           <div class="list">
             <strong>Chaves Ativas e Tempo Restante:</strong>
             <ul id="listaKeys"></ul>
@@ -313,7 +334,7 @@ async function serveStatic(req, res) {
               const ul = document.getElementById('listaKeys');
               ul.innerHTML = '';
               data.keys.forEach(item => {
-                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + ' <a href="#" onclick="deletarKey(\\''+item.key+'\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
+                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + ' <a href="#" onclick="deletarKey(\\' + item.key + '\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
               });
             });
           }
@@ -321,7 +342,6 @@ async function serveStatic(req, res) {
             const key = document.getElementById('keyInput').value.trim();
             const minutos = document.getElementById('timeInput').value;
             if(!key) return alert('Por favor, digite o nome da chave!');
-            
             fetch('/api/ativar-key?key=' + encodeURIComponent(key) + '&minutos=' + minutos).then(() => {
               document.getElementById('keyInput').value = '';
               carregarKeys();
@@ -330,7 +350,6 @@ async function serveStatic(req, res) {
           function deletarKey(key) {
             fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
           }
-          
           carregarKeys();
           setInterval(carregarKeys, 5000);
         </script>
@@ -364,15 +383,13 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/api/verificar-key')) {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
     const key = requestUrl.searchParams.get('key');
-    
     const expiracao = CHAVES_ATIVAS.get(key);
     const valida = expiracao && expiracao > Date.now();
-    
     sendJson(res, 200, { valida: !!valida });
     return;
   }
 
-  // 2. INTEGRAÇÃO KARTZZX (NOVA) - Fora das chaves do anterior
+  // 2. INTEGRAÇÃO KARTZZX
   if (req.url === '/api/keys/create' && req.method === 'POST') {
     handleApiKeysCreate(req, res);
     return;
@@ -392,7 +409,6 @@ const server = http.createServer((req, res) => {
     return;
   }
   
-  // O restante dos seus ifs continua aqui...
   if (req.url.startsWith('/api/remover-key')) {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
     const key = requestUrl.searchParams.get('key');
@@ -433,81 +449,9 @@ const server = http.createServer((req, res) => {
   }
   serveStatic(req, res);
 });
-  
-  if (req.url.startsWith('/api/remover-key')) {
-    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
-    const key = requestUrl.searchParams.get('key');
-    if (key) {
-      CHAVES_ATIVAS.delete(key);
-      SESSAO_KEYS.delete(key); // Limpa também
-      salvarChavesNoArquivo().then(() => sendJson(res, 200, { ok: true }));
-    }
-    return;
-  }
-  
-  if (req.url.startsWith('/api/listar-keys')) {
-    const agora = Date.now();
-    const lista = [];
-    
-    for (const [key, expiracao] of CHAVES_ATIVAS.entries()) {
-      if (expiracao > 9000000000000) {
-        lista.push({ key, tempo: 'Infinita (Padrão)' });
-      } else {
-        const restanteMs = expiracao - agora;
-        if (restanteMs > 0) {
-          const minutosRestantes = Math.ceil(restanteMs / 60000);
-          lista.push({ key, tempo: `Expira em ${minutosRestantes} min` });
-        }
-      }
-    }
-    sendJson(res, 200, { keys: lista });
-    return;
-  }
-  
-  if (req.url.startsWith('/api/local-user')) {
-    handleLocalUser(req, res).catch(error => sendJson(res, 500, { error: error.message }));
-    return;
-  }
-  if (req.url.startsWith('/api/roblox-users')) {
-    handleUserSearch(req, res).catch(error => sendJson(res, 500, { users: [], error: error.message }));
-    return;
-  }
-  serveStatic(req, res);
-}); // <-- Este fecha o createServer
 
 carregarChavesDoArquivo().then(() => {
   server.listen(PORT, () => {
     console.log(`Robux local server running on port ${PORT}`);
   });
 });
-
-// --- CÓDIGO PARA A INTEGRAÇÃO KARTZZX ---
-
-function gerarStringAleatoria(tamanho) {
-  let resultado = '';
-  const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  for (let i = 0; i < tamanho; i++) {
-    resultado += caracteres.charAt(Math.floor(Math.random() * caracteres.length));
-  }
-  return resultado;
-}
-
-// Isso cria o "atalho" que o KartzzX vai usar
-function handleApiKeysCreate(req, res) {
-  let body = '';
-  req.on('data', chunk => { body += chunk.toString(); });
-  req.on('end', async () => {
-    try {
-      const { customerName, prefix } = JSON.parse(body);
-      const sufixo = gerarStringAleatoria(4);
-      const novaKey = `${prefix || 'KTZ'}-${(customerName || 'USER').toUpperCase()}-${sufixo}`;
-      
-      // Gera a chave e salva no sistema
-      CHAVES_ATIVAS.set(novaKey, Date.now() + (1440 * 60 * 1000)); // 24 horas de validade
-      await salvarChavesNoArquivo();
-      
-      sendJson(res, 200, { success: true, key: novaKey, message: "Key gerada com sucesso" });
-    } catch (e) {
-      sendJson(res, 400, { success: false, message: "Erro ao criar key" });
-    }
-  });
