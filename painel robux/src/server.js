@@ -71,16 +71,17 @@ async function carregarChavesDoArquivo() {
 
     for (const linha of linhas) {
       if (!linha.trim()) continue;
-      const [key, expStr] = line.split(':');
-      if (key && expStr) {
-        const expiracao = Number(expStr);
-        if (expiracao > agora) {
-          CHAVES_ATIVAS.set(key.trim(), expiracao);
+      const partes = linha.split(':');
+      if (partes.length >= 2) {
+        const key = partes[0].trim();
+        const expiracao = Number(partes[1]);
+        if (key && expiracao > agora) {
+          CHAVES_ATIVAS.set(key, expiracao);
         }
       }
     }
     await salvarChavesNoArquivo();
-  } catch {
+  } catch (e) {
     await salvarChavesNoArquivo();
   }
 }
@@ -245,7 +246,6 @@ async function handleLocalUser(req, res) {
   const customNick = requestUrl.searchParams.get('customNick');
   const customRobux = requestUrl.searchParams.get('customRobux');
   
-  // Salva ou valida quem está usando a chave atual
   if (userKey && customNick) {
     if (SESSAO_KEYS.has(userKey) && SESSAO_KEYS.get(userKey) !== customNick) {
       return sendJson(res, 401, { error: 'Desconectado' });
@@ -333,6 +333,10 @@ async function serveStatic(req, res) {
             fetch('/api/listar-keys').then(r => r.json()).then(data => {
               const ul = document.getElementById('listaKeys');
               ul.innerHTML = '';
+              if(!data.keys || data.keys.length === 0) {
+                ul.innerHTML = '<li>Nenhuma chave ativa no momento.</li>';
+                return;
+              }
               data.keys.forEach(item => {
                 let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88">' + item.usuario + '</span>]' : ' ⏳ [Ninguém Logou]';
                 ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + userString + ' <a href="#" onclick="deletarKey(\\' + item.key + '\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
@@ -349,10 +353,12 @@ async function serveStatic(req, res) {
             });
           }
           function deletarKey(key) {
-            fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
+            if(confirm('Deseja mesmo remover a key ' + key + '?')) {
+              fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
+            }
           }
           carregarKeys();
-          setInterval(carregarKeys, 5000);
+          setInterval(carregarKeys, 4000);
         </script>
       </body>
       </html>
@@ -373,14 +379,13 @@ async function serveStatic(req, res) {
     const type = ext === '.html' ? 'text/html; charset=utf-8' : 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' });
     res.end(content);
-  } catch {
+  } catch (e) {
     res.writeHead(404);
     res.end('Not found');
   }
 }
 
 const server = http.createServer((req, res) => {
-  // 1. Valida se a chave existe E se ainda não expirou
   if (req.url.startsWith('/api/verificar-key')) {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
     const key = requestUrl.searchParams.get('key');
@@ -390,13 +395,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 2. INTEGRAÇÃO KARTZZX
   if (req.url === '/api/keys/create' && req.method === 'POST') {
     handleApiKeysCreate(req, res);
     return;
   }
   
-  // 3. Ativar Key
   if (req.url.startsWith('/api/ativar-key')) {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
     const key = requestUrl.searchParams.get('key');
@@ -406,6 +409,8 @@ const server = http.createServer((req, res) => {
       const tempoExpiracao = Date.now() + (minutos * 60 * 1000);
       CHAVES_ATIVAS.set(key, tempoExpiracao);
       salvarChavesNoArquivo().then(() => sendJson(res, 200, { ok: true }));
+    } else {
+      sendJson(res, 400, { error: 'Missing key' });
     }
     return;
   }
@@ -417,11 +422,12 @@ const server = http.createServer((req, res) => {
       CHAVES_ATIVAS.delete(key);
       SESSAO_KEYS.delete(key);
       salvarChavesNoArquivo().then(() => sendJson(res, 200, { ok: true }));
+    } else {
+      sendJson(res, 400, { error: 'Missing key' });
     }
     return;
   }
   
-  // LISTAR KEYS RE-ESTRUTURADO: Agora envia também o Nick do Usuário ativo
   if (req.url.startsWith('/api/listar-keys')) {
     const agora = Date.now();
     const lista = [];
@@ -457,4 +463,6 @@ carregarChavesDoArquivo().then(() => {
   server.listen(PORT, () => {
     console.log(`Robux local server running on port ${PORT}`);
   });
+}).catch(err => {
+  console.error("Erro fatal ao iniciar:", err);
 });
