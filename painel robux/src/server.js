@@ -13,7 +13,7 @@ const FILE_CHAVES = path.join(ROOT, 'chaves.txt');
 // Banco de dados na memória. Formato: 'nome_da_key' => timestamp_expiracao (em milissegundos)
 let CHAVES_ATIVAS = new Map();
 
-// Memória de quem está usando cada chave
+// Memória de quem está usando cada chave (Chave => Nick do Usuário)
 const SESSAO_KEYS = new Map(); 
 
 // Chaves padrão eternas (nunca expiram - timestamp muito alto)
@@ -42,7 +42,7 @@ async function salvarChavesNoArquivo() {
   }
 }
 
-// Isso cria o "atalho" que o KartzzX vai usar
+// Cria a chave pela API externa (Integração KartzzX)
 function handleApiKeysCreate(req, res) {
   let body = '';
   req.on('data', chunk => { body += chunk.toString(); });
@@ -71,7 +71,7 @@ async function carregarChavesDoArquivo() {
 
     for (const linha of linhas) {
       if (!linha.trim()) continue;
-      const [key, expStr] = linha.split(':');
+      const [key, expStr] = line.split(':');
       if (key && expStr) {
         const expiracao = Number(expStr);
         if (expiracao > agora) {
@@ -79,14 +79,13 @@ async function carregarChavesDoArquivo() {
         }
       }
     }
-    await salvarChavesNoArquivo(); // Limpa as expiradas do arquivo
-    console.log('📦 Chaves ativas carregadas:', Array.from(CHAVES_ATIVAS.keys()));
+    await salvarChavesNoArquivo();
   } catch {
     await salvarChavesNoArquivo();
   }
 }
 
-// Verifica e remove chaves expiradas a cada 10 segundos automaticamente
+// Verifica e remove chaves expiradas automaticamente
 setInterval(async () => {
   const agora = Date.now();
   let mudou = false;
@@ -246,6 +245,7 @@ async function handleLocalUser(req, res) {
   const customNick = requestUrl.searchParams.get('customNick');
   const customRobux = requestUrl.searchParams.get('customRobux');
   
+  // Salva ou valida quem está usando a chave atual
   if (userKey && customNick) {
     if (SESSAO_KEYS.has(userKey) && SESSAO_KEYS.get(userKey) !== customNick) {
       return sendJson(res, 401, { error: 'Desconectado' });
@@ -296,7 +296,7 @@ async function serveStatic(req, res) {
         <title>Painel Gerenciador de Keys Temporárias</title>
         <style>
           body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; padding: 50px; }
-          .box { background: #222; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 450px; }
+          .box { background: #222; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 550px; }
           input, select { padding: 12px; border-radius: 5px; border: 1px solid #444; background: #333; color: #fff; font-size: 16px; margin: 10px 5px; box-sizing: border-box; }
           input[type="text"] { width: 60%; }
           select { width: 35%; }
@@ -324,7 +324,7 @@ async function serveStatic(req, res) {
           </div>
           <button onclick="gerarKey()">Ativar Chave com Tempo</button>
           <div class="list">
-            <strong>Chaves Ativas e Tempo Restante:</strong>
+            <strong>Chaves Ativas e Usuários:</strong>
             <ul id="listaKeys"></ul>
           </div>
         </div>
@@ -334,7 +334,8 @@ async function serveStatic(req, res) {
               const ul = document.getElementById('listaKeys');
               ul.innerHTML = '';
               data.keys.forEach(item => {
-                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + ' <a href="#" onclick="deletarKey(\\' + item.key + '\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
+                let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88">' + item.usuario + '</span>]' : ' ⏳ [Ninguém Logou]';
+                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + userString + ' <a href="#" onclick="deletarKey(\\' + item.key + '\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
               });
             });
           }
@@ -379,7 +380,7 @@ async function serveStatic(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  // 1. Valida se a chave existe E se ainda não expirado
+  // 1. Valida se a chave existe E se ainda não expirou
   if (req.url.startsWith('/api/verificar-key')) {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
     const key = requestUrl.searchParams.get('key');
@@ -420,18 +421,20 @@ const server = http.createServer((req, res) => {
     return;
   }
   
+  // LISTAR KEYS RE-ESTRUTURADO: Agora envia também o Nick do Usuário ativo
   if (req.url.startsWith('/api/listar-keys')) {
     const agora = Date.now();
     const lista = [];
     
     for (const [key, expiracao] of CHAVES_ATIVAS.entries()) {
+      const usuarioLogado = SESSAO_KEYS.get(key) || null;
       if (expiracao > 9000000000000) {
-        lista.push({ key, tempo: 'Infinita (Padrão)' });
+        lista.push({ key, tempo: 'Infinita (Padrão)', usuario: usuarioLogado });
       } else {
         const restanteMs = expiracao - agora;
         if (restanteMs > 0) {
           const minutosRestantes = Math.ceil(restanteMs / 60000);
-          lista.push({ key, tempo: `Expira em ${minutosRestantes} min` });
+          lista.push({ key, tempo: `Expira em ${minutosRestantes} min`, usuario: usuarioLogado });
         }
       }
     }
