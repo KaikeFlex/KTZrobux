@@ -19,14 +19,28 @@ const SESSAO_KEYS = new Map();
 // Chaves padrão eternas (nunca expiram - timestamp muito alto)
 CHAVES_ATIVAS.set('ktz', 9999999999999);
 
-// Função para gerar strings aleatórias usadas na integração
-function gerarStringAleatoria(tamanho) {
-  let resultado = '';
-  const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  for (let i = 0; i < tamanho; i++) {
-    resultado += caracteres.charAt(Math.floor(Math.random() * caracteres.length));
+// Função para carregar as chaves salvas do arquivo ao iniciar
+async function carregarChavesDoArquivo() {
+  try {
+    const conteudo = await fs.readFile(FILE_CHAVES, 'utf8');
+    const linhas = conteudo.split(/\r?\n/);
+    const agora = Date.now();
+
+    for (const linha of linhas) {
+      if (!linha.trim()) continue;
+      const [key, expStr] = linha.split(':');
+      if (key && expStr) {
+        const expiracao = Number(expStr);
+        if (expiracao > agora) {
+          CHAVES_ATIVAS.set(key.trim(), expiracao);
+        }
+      }
+    }
+    await salvarChavesNoArquivo(); 
+    console.log('📦 Chaves ativas carregadas:', Array.from(CHAVES_ATIVAS.keys()));
+  } catch {
+    await salvarChavesNoArquivo();
   }
-  return resultado;
 }
 
 // Função para salvar a lista atual no arquivo chaves.txt
@@ -39,50 +53,6 @@ async function salvarChavesNoArquivo() {
     await fs.writeFile(FILE_CHAVES, linhas.join('\n'), 'utf8');
   } catch (err) {
     console.error('Erro ao salvar chaves.txt:', err);
-  }
-}
-
-// Cria a chave pela API externa (Integração KartzzX)
-function handleApiKeysCreate(req, res) {
-  let body = '';
-  req.on('data', chunk => { body += chunk.toString(); });
-  req.on('end', async () => {
-    try {
-      const { customerName, prefix } = JSON.parse(body);
-      const sufixo = gerarStringAleatoria(4);
-      const novaKey = `${prefix || 'KTZ'}-${(customerName || 'USER').toUpperCase()}-${sufixo}`;
-      
-      CHAVES_ATIVAS.set(novaKey, Date.now() + (1440 * 60 * 1000)); // 24 horas de validade
-      await salvarChavesNoArquivo();
-      
-      sendJson(res, 200, { success: true, key: novaKey, message: "Key gerada com sucesso" });
-    } catch (e) {
-      sendJson(res, 400, { success: false, message: "Erro ao criar key" });
-    }
-  });
-}
-
-// Função para carregar as chaves salvas do arquivo ao iniciar
-async function carregarChavesDoArquivo() {
-  try {
-    const conteudo = await fs.readFile(FILE_CHAVES, 'utf8');
-    const linhas = conteudo.split(/\r?\n/);
-    const agora = Date.now();
-
-    for (const linha of linhas) {
-      if (!linha.trim()) continue;
-      const partes = linha.split(':');
-      if (partes.length >= 2) {
-        const key = partes[0].trim();
-        const expiracao = Number(partes[1]);
-        if (key && expiracao > agora) {
-          CHAVES_ATIVAS.set(key, expiracao);
-        }
-      }
-    }
-    await salvarChavesNoArquivo();
-  } catch (e) {
-    await salvarChavesNoArquivo();
   }
 }
 
@@ -333,12 +303,12 @@ async function serveStatic(req, res) {
             fetch('/api/listar-keys').then(r => r.json()).then(data => {
               const ul = document.getElementById('listaKeys');
               ul.innerHTML = '';
-              if(!data.keys || data.keys.length === 0) {
-                ul.innerHTML = '<li>Nenhuma chave ativa no momento.</li>';
+              if (!data.keys || data.keys.length === 0) {
+                ul.innerHTML = '<li>Nenhuma chave ativa encontrada.</li>';
                 return;
               }
               data.keys.forEach(item => {
-                let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88">' + item.usuario + '</span>]' : ' ⏳ [Ninguém Logou]';
+                let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88; font-weight:bold;">' + item.usuario + '</span>]' : ' ⏳ [Aguardando Entrada]';
                 ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + userString + ' <a href="#" onclick="deletarKey(\\' + item.key + '\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
               });
             });
@@ -353,9 +323,7 @@ async function serveStatic(req, res) {
             });
           }
           function deletarKey(key) {
-            if(confirm('Deseja mesmo remover a key ' + key + '?')) {
-              fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
-            }
+            fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
           }
           carregarKeys();
           setInterval(carregarKeys, 4000);
@@ -379,10 +347,38 @@ async function serveStatic(req, res) {
     const type = ext === '.html' ? 'text/html; charset=utf-8' : 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' });
     res.end(content);
-  } catch (e) {
+  } catch {
     res.writeHead(404);
     res.end('Not found');
   }
+}
+
+function gerarStringAleatoria(tamanho) {
+  let resultado = '';
+  const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  for (let i = 0; i < tamanho; i++) {
+    resultado += caracteres.charAt(Math.floor(Math.random() * caracteres.length));
+  }
+  return resultado;
+}
+
+function handleApiKeysCreate(req, res) {
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', async () => {
+    try {
+      const { customerName, prefix } = JSON.parse(body);
+      const sufixo = gerarStringAleatoria(4);
+      const novaKey = `${prefix || 'KTZ'}-${(customerName || 'USER').toUpperCase()}-${sufixo}`;
+      
+      CHAVES_ATIVAS.set(novaKey, Date.now() + (1440 * 60 * 1000)); 
+      await salvarChavesNoArquivo();
+      
+      sendJson(res, 200, { success: true, key: novaKey, message: "Key gerada com sucesso" });
+    } catch (e) {
+      sendJson(res, 400, { success: false, message: "Erro ao criar key" });
+    }
+  });
 }
 
 const server = http.createServer((req, res) => {
@@ -409,8 +405,6 @@ const server = http.createServer((req, res) => {
       const tempoExpiracao = Date.now() + (minutos * 60 * 1000);
       CHAVES_ATIVAS.set(key, tempoExpiracao);
       salvarChavesNoArquivo().then(() => sendJson(res, 200, { ok: true }));
-    } else {
-      sendJson(res, 400, { error: 'Missing key' });
     }
     return;
   }
@@ -422,8 +416,6 @@ const server = http.createServer((req, res) => {
       CHAVES_ATIVAS.delete(key);
       SESSAO_KEYS.delete(key);
       salvarChavesNoArquivo().then(() => sendJson(res, 200, { ok: true }));
-    } else {
-      sendJson(res, 400, { error: 'Missing key' });
     }
     return;
   }
@@ -463,6 +455,4 @@ carregarChavesDoArquivo().then(() => {
   server.listen(PORT, () => {
     console.log(`Robux local server running on port ${PORT}`);
   });
-}).catch(err => {
-  console.error("Erro fatal ao iniciar:", err);
 });
