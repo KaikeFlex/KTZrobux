@@ -28,11 +28,12 @@ async function carregarChavesDoArquivo() {
 
     for (const linha of linhas) {
       if (!linha.trim()) continue;
-      const [key, expStr] = linha.split(':');
-      if (key && expStr) {
-        const expiracao = Number(expStr);
-        if (expiracao > agora) {
-          CHAVES_ATIVAS.set(key.trim(), expiracao);
+      const parts = linha.split(':');
+      if (parts.length >= 2) {
+        const key = parts[0].trim();
+        const expiracao = Number(parts[1]);
+        if (key && expiracao > agora) {
+          CHAVES_ATIVAS.set(key, expiracao);
         }
       }
     }
@@ -253,106 +254,6 @@ async function handleLocalUser(req, res) {
   });
 }
 
-async function serveStatic(req, res) {
-  const requestUrl = new URL(req.url, `http://${req.headers.host}`);
-  const pathname = decodeURIComponent(requestUrl.pathname);
-
-  if (pathname === '/painel-admin') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Painel Gerenciador de Keys Temporárias</title>
-        <style>
-          body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; padding: 50px; }
-          .box { background: #222; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 550px; }
-          input, select { padding: 12px; border-radius: 5px; border: 1px solid #444; background: #333; color: #fff; font-size: 16px; margin: 10px 5px; box-sizing: border-box; }
-          input[type="text"] { width: 60%; }
-          select { width: 35%; }
-          button { padding: 12px 20px; background: #28a745; border: none; border-radius: 5px; color: white; font-weight: bold; cursor: pointer; font-size: 16px; width: 98%; margin-top: 10px; }
-          button:hover { background: #218838; }
-          .list { margin-top: 25px; text-align: left; background: #333; padding: 15px; border-radius: 5px; }
-          ul { padding-left: 20px; }
-          li { margin-bottom: 8px; }
-        </style>
-      </head>
-      <body>
-        <div class="box">
-          <h2>🔑 Gerenciador de Keys Temporárias</h2>
-          <p>Configure a chave e o tempo de validade do cliente</p>
-          <div style="text-align: left;">
-            <input type="text" id="keyInput" placeholder="Nome da Chave (Ex: vip30)">
-            <select id="timeInput">
-              <option value="1">1 Minuto (Teste)</option>
-              <option value="5">5 Minutos</option>
-              <option value="30">30 Minutos</option>
-              <option value="60">1 Hora</option>
-              <option value="180">3 Horas</option>
-              <option value="1440">24 Horas (1 Dia)</option>
-            </select>
-          </div>
-          <button onclick="gerarKey()">Ativar Chave com Tempo</button>
-          <div class="list">
-            <strong>Chaves Ativas e Usuários:</strong>
-            <ul id="listaKeys"></ul>
-          </div>
-        </div>
-        <script>
-          function carregarKeys() {
-            fetch('/api/listar-keys').then(r => r.json()).then(data => {
-              const ul = document.getElementById('listaKeys');
-              ul.innerHTML = '';
-              if (!data.keys || data.keys.length === 0) {
-                ul.innerHTML = '<li>Nenhuma chave ativa encontrada.</li>';
-                return;
-              }
-              data.keys.forEach(item => {
-                let userString = item.usuario ? ' 👤 [Logado: <span style="color:#00ff88; font-weight:bold;">' + item.usuario + '</span>]' : ' ⏳ [Aguardando Entrada]';
-                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + userString + ' <a href="#" onclick="deletarKey(\\' + item.key + '\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
-              });
-            });
-          }
-          function gerarKey() {
-            const key = document.getElementById('keyInput').value.trim();
-            const minutos = document.getElementById('timeInput').value;
-            if(!key) return alert('Por favor, digite o nome da chave!');
-            fetch('/api/ativar-key?key=' + encodeURIComponent(key) + '&minutos=' + minutos).then(() => {
-              document.getElementById('keyInput').value = '';
-              carregarKeys();
-            });
-          }
-          function deletarKey(key) {
-            fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
-          }
-          carregarKeys();
-          setInterval(carregarKeys, 4000);
-        </script>
-      </body>
-      </html>
-    `);
-    return;
-  }
-
-  const fileName = pathname === '/' || pathname === '/pt/robuxcomprar.html' ? 'robuxcomprar.html' : pathname.replace(/^\/+/, '');
-  const filePath = path.resolve(ROOT, fileName);
-  if (!filePath.startsWith(ROOT)) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return;
-  }
-  try {
-    const content = await fs.readFile(filePath);
-    const ext = path.extname(filePath).toLowerCase();
-    const type = ext === '.html' ? 'text/html; charset=utf-8' : 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' });
-    res.end(content);
-  } catch {
-    res.writeHead(404);
-    res.end('Not found');
-  }
-}
-
 function gerarStringAleatoria(tamanho) {
   let resultado = '';
   const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -379,6 +280,107 @@ function handleApiKeysCreate(req, res) {
       sendJson(res, 400, { success: false, message: "Erro ao criar key" });
     }
   });
+}
+
+async function serveStatic(req, res) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+  const pathname = decodeURIComponent(requestUrl.pathname);
+
+// 🔑 NOVO PAINEL COM SELEÇÃO DE TEMPO
+  if (pathname === '/painel-admin') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Painel Gerenciador de Keys Temporárias</title>
+        <style>
+          body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; padding: 50px; }
+          .box { background: #222; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 450px; }
+          input, select { padding: 12px; border-radius: 5px; border: 1px solid #444; background: #333; color: #fff; font-size: 16px; margin: 10px 5px; box-sizing: border-box; }
+          input[type="text"] { width: 60%; }
+          select { width: 35%; }
+          button { padding: 12px 20px; background: #28a745; border: none; border-radius: 5px; color: white; font-weight: bold; cursor: pointer; font-size: 16px; width: 98%; margin-top: 10px; }
+          button:hover { background: #218838; }
+          .list { margin-top: 25px; text-align: left; background: #333; padding: 15px; border-radius: 5px; }
+          ul { padding-left: 20px; }
+          li { margin-bottom: 8px; }
+        </style>
+      </head>
+      <body>
+        <div class="box">
+          <h2>🔑 Gerenciador de Keys Temporárias</h2>
+          <p>Configure a chave e o tempo de validade do cliente</p>
+          
+          <div style="text-align: left;">
+            <input type="text" id="keyInput" placeholder="Nome da Chave (Ex: vip30)">
+            <select id="timeInput">
+              <option value="1">1 Minuto (Teste)</option>
+              <option value="5">5 Minutos</option>
+              <option value="30">30 Minutos</option>
+              <option value="60">1 Hora</option>
+              <option value="180">3 Horas</option>
+              <option value="1440">24 Horas (1 Dia)</option>
+            </select>
+          </div>
+          
+          <button onclick="gerarKey()">Ativar Chave com Tempo</button>
+          
+          <div class="list">
+            <strong>Chaves Ativas e Tempo Restante:</strong>
+            <ul id="listaKeys"></ul>
+          </div>
+        </div>
+        <script>
+          function carregarKeys() {
+            fetch('/api/listar-keys').then(r => r.json()).then(data => {
+              const ul = document.getElementById('listaKeys');
+              ul.innerHTML = '';
+              data.keys.forEach(item => {
+                ul.innerHTML += '<li>🔑 <strong>' + item.key + '</strong> - ' + item.tempo + ' <a href="#" onclick="deletarKey(\\''+item.key+'\\')" style="color:#ff4d4d;margin-left:15px;text-decoration:none;">[Remover]</a></li>';
+              });
+            });
+          }
+          function gerarKey() {
+            const key = document.getElementById('keyInput').value.trim();
+            const minutos = document.getElementById('timeInput').value;
+            if(!key) return alert('Por favor, digite o nome da chave!');
+            
+            fetch('/api/ativar-key?key=' + encodeURIComponent(key) + '&minutos=' + minutos).then(() => {
+              document.getElementById('keyInput').value = '';
+              carregarKeys();
+            });
+          }
+          function deletarKey(key) {
+            fetch('/api/remover-key?key=' + encodeURIComponent(key)).then(() => carregarKeys());
+          }
+          
+          carregarKeys();
+          setInterval(carregarKeys, 5000);
+        </script>
+      </body>
+      </html>
+    `);
+    return;
+  }
+
+  const fileName = pathname === '/' || pathname === '/pt/robuxcomprar.html' ? 'robuxcomprar.html' : pathname.replace(/^\/+/, '');
+  const filePath = path.resolve(ROOT, fileName);
+  if (!filePath.startsWith(ROOT)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+  try {
+    const content = await fs.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const type = ext === '.html' ? 'text/html; charset=utf-8' : 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' });
+    res.end(content);
+  } catch {
+    res.writeHead(404);
+    res.end('Not found');
+  }
 }
 
 const server = http.createServer((req, res) => {
