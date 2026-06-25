@@ -511,4 +511,3 @@ function handleApiKeysCreate(req, res) {
       sendJson(res, 400, { success: false, message: "Erro ao criar key" });
     }
   });
-}
